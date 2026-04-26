@@ -1,0 +1,11 @@
+a2a-sdk[http-server]
+httpx
+fastapi
+pydantic
+uvicorn
+langchain
+langchain_openai
+langchain_ollama
+langchain-community
+langchain-mcp-adapters
+python-dotenv

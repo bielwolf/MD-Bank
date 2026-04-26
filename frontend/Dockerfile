@@ -2,7 +2,7 @@ FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libffi-dev \
+    libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -15,4 +15,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+EXPOSE 9090
+
+CMD ["streamlit", "run", "app.py", "--server.port=9090", "--server.address=0.0.0.0", "--server.runOnSave=true", "--server.fileWatcherType=poll"]

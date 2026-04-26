@@ -2,7 +2,7 @@ services:
 
   supervisor:
     build: ./supervisor
-    container_name: mdbank_supervirsor_agents
+    container_name: mdbank_supervisor_agents
     ports:
       - "8080:8000"
     volumes:
@@ -15,3 +15,21 @@ services:
       - "9090:9090"
     volumes:
       - ./frontend:/app
+
+  abrir_conta_agent:
+    container_name: abrir_conta_agent
+    build: 
+      context: ./agents/abrir_conta
+    volumes:
+      - ./agents/abrir_conta:/app
+    ports:
+      - "8081:8000"
+
+  cartao_credito_agent:
+    container_name: cartao_credito-agent
+    build: 
+      context: ./agents/cartao_credito
+    volumes:
+      - ./agents/cartao_credito:/app
+    ports:
+      - "8082:8000"
