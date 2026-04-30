@@ -31,7 +31,7 @@ agente_abertura_conta = create_agent(
 )
 
 async def run_agent(mensagem: str):
-    resultado = await agente_abertura_conta.invoke({
+    resultado = await agente_abertura_conta.ainvoke({
         "messages": [HumanMessage(content=mensagem)]
     })
     return resultado["messages"][-1].content

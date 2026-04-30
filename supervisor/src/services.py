@@ -8,13 +8,13 @@ from typing import TypedDict, Annotated
 from operator import add
 
 from a2a.client import A2ACardResolver, A2AClient
-from a2a.types import Message, Part, Role, TextPart
+from a2a.types import Message, Part, Role, TextPart, SendMessageRequest, MessageSendParams
 
 from src.agents import classifique_intencao_do_usuario
 
 logger = logging.getLogger(__name__)
 
-HTTPX_CLIENT = httpx.AsyncClient(timeout=30)
+HTTPX_CLIENT = httpx.AsyncClient(timeout=120)
 
 AGENTS = {
     "cartao_credito": "http://cartao_credito_agent:8000",
@@ -32,8 +32,8 @@ async def request_agent(message: str, agent_url: str) -> str:
         logger.info(f"Descobrindo AgentCard em {agent_url}")
 
         resolver = A2ACardResolver(
-            agent_url, 
-            HTTPX_CLIENT
+            HTTPX_CLIENT,
+            agent_url
         )
 
         agent_card = await resolver.get_agent_card()
@@ -47,23 +47,35 @@ async def request_agent(message: str, agent_url: str) -> str:
 
     client = CLIENT_CACHE[agent_url]
 
-    msg = Message(
-        role=Role.user,
-        message_id=str(uuid.uuid4()),
-        parts=[
-            Part(
-                root=TextPart(text=message)
-            )
-        ]
+    request = SendMessageRequest(
+        id=str(uuid.uuid4()),
+        params=MessageSendParams(
+            message=Message(
+                role=Role.user,
+                messageId=str(uuid.uuid4()),
+                parts=[
+                    Part(
+                        root=TextPart(
+                            text=message
+                        )
+                    )
+                ]
+            ),  
+        )
     )
 
     logger.info(f"Enviando mensagem para agente: {message}")
 
-    async for event in client.send_message(msg):
-        if isinstance(event, TextPart):
-            for part in event.parts:
-                if part.root.kind == "text":
-                    return part.root.text
+    response = await client.send_message(request)
+
+    if hasattr(response, "root"):
+        result = response.root
+        if hasattr(result, "result"):
+            result_msg = result.result
+            if hasattr(result_msg, "parts"):
+                for part in result_msg.parts:
+                    if hasattr(part.root, "text"):
+                        return part.root.text
                 
     return 'Sem resposta do agente'
 
