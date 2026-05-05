@@ -1,0 +1,15 @@
+{
+  "contas": {
+    "123456789": {
+      "nome": "Gabriel Lobo da SIlva",
+      "numero": 70160,
+      "saldo": 0
+    }
+  },
+  "cartoes": {
+    "123456789": {
+      "numero": 87204,
+      "tipo": "platinum"
+    }
+  }
+}
