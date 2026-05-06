@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 body {
-    background-color: #f9fafb;
+    @apply bg-gray-50 font-sans;
     /* fundo suave */
-    font-family: 'Inter', sans-serif;
-}
+    background-color: #f9fafb}

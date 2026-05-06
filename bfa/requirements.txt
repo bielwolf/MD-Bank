@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+a2a-sdk==0.2.9
+rank-bm25
+numpy
