@@ -1,21 +1,36 @@
 import logging
 import os
-from typing import List
+import re
+import json
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+# from langchain.chat_models import init_chat_model
 from langchain_ollama import ChatOllama
+from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
+from langgraph.checkpoint.memory import InMemorySaver
+
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+# _llm = init_chat_model(
+#     model="gpt-4o",
+#     api_key=os.getenv("OPENAI_API_KEY"),
+#     temperature=0
+# )
 
 _llm = ChatOllama(
     model="llama3.1", 
     base_url="http://host.docker.internal:11434",
     temperature=0.7
 )
+
+memory = InMemorySaver()
 
 class RouterOutput(BaseModel):
     agents: List[str] = Field(
@@ -24,37 +39,105 @@ class RouterOutput(BaseModel):
 
 parser = JsonOutputParser(pydantic_object=RouterOutput)
 
-def classifique_intencao_do_usuario(query: str) -> List[dict]:
-    """
-    Classifica a pergunta e retorna quais agentes devem ser chamados
-    """
+async def build_router_agent():
+    agent = create_react_agent(
+        _llm,
+        tools=[],
+        prompt=f"""
+Você é o roteador de agentes do MDBank, um banco digital moderno, seguro e confiável, especializado em fornecer soluções financeiras personalizadas para cada cliente.
+Você NÃO verifica dados, NÃO consulta sistemas e NÃO responde perguntas.
+Sua ÚNICA função é escolher qual agente deve responder.
+SEMPRE retorne JSON, nunca texto livre.
 
-    prompt = f"""
-Você é um roteador de agentes de um banco.
+Objetivo do MDBank:
+- Auxiliar clientes na abertura de contas e emissão de cartões de forma rápida, segura e transparente.
+- Garantir que cada cliente receba produtos financeiros adequados ao seu perfil.
+- Fornecer informações claras sobre serviços, produtos e processos bancários.
+- Evitar informações incorretas, inconsistentes ou inventadas.
+
+Função do roteador:
+- Identificar a intenção do cliente de forma precisa.
+- Selecionar os agentes apropriados (cartao_credito, abrir_conta) com base no histórico do cliente e no contexto da conversa.
+- Aplicar regras de negócios do MDBank de maneira consistente.
 
 Agentes disponíveis:
-- cartão_credito: Responde perguntas relacionadas a cartão de crédito
--abrir_conta: Responde perguntas relacionadas a abertura de conta
+- cartao_credito: responsável por gerenciar solicitações relacionadas a cartões de crédito.
+- abrir_conta: responsável por auxiliar na abertura de contas correntes e digitais.
 
-Uma pergunta pode exigir mais de um agente.
+Regras IMPORTANTES:
+1. Utilize sempre o contexto da conversa (memória) e histórico do cliente.
+2. Se o cliente já possui conta, NÃO chame abrir_conta novamente.
+3. Uma pergunta pode exigir mais de um agente.
+4. Nunca invente informações ou dados de clientes.
+5. Informe claramente se alguma ação não puder ser realizada (ex: cliente já possui conta, dados incompletos, requisitos não atendidos).
+6. Ao lidar com solicitações sensíveis (dados de conta, informações financeiras pessoais), sempre oriente o cliente a acessar o aplicativo oficial ou entrar em contato com suporte seguro.
+7. Mantenha linguagem profissional, educada, objetiva e empática, transmitindo confiança de banco real.
+8. Para onboarding, forneça explicações sobre o motivo de abrir conta, benefícios do MDBank, e passos que o cliente precisa seguir, caso ele esteja iniciando a relação com o banco.
 
-Responda apenas em JSON.
 
-Pergunta: 
-{query}
+- JSON deve ser válido e conter apenas os agentes selecionados.
+- Evite qualquer texto fora do JSON no output.
 
+Exemplo de interpretação do prompt:
+- Cliente pede cartão, mas não tem conta → selecione abrir_conta primeiro.
+- Cliente já possui conta → selecione cartao_credito se aplicável.
+- Cliente pergunta sobre benefícios do banco → selecione abrir_conta ou ambos se houver necessidade de interação com múltiplos agentes.
+
+Responda SEMPRE em JSON no formato:
 {parser.get_format_instructions()}
-"""
-    resposta = _llm.invoke(prompt)
-    resultado = parser.parse(str(resposta.content))
-    agentes = resultado["agents"]
-    logger.info(f"Agentes selecionados para a pergunta: {agentes}")
+""",
+        checkpointer=memory,
+    )
+    return agent
 
-    return [
-        {
-            "query": query,
-            "agent": agente
-        }
 
-        for agente in agentes
-    ]
+async def classifique_intencao_do_usuario(
+    query: str,
+    thread_id: str = "1"
+) -> List[Dict[str, Any]]:
+    agent = await build_router_agent()
+
+    try:
+        resultado = await agent.ainvoke(
+            {
+                "messages": [HumanMessage(content=query)]
+            },
+            {
+                "configurable": {
+                    "thread_id": thread_id
+                }
+            }
+        )
+
+        resposta_texto = resultado["messages"][-1].content
+        logger.info(f"Resposta bruta do modelo: {repr(resposta_texto)}")
+
+        # Inclua abaixo se for usar o ChatOpenAi
+        # parsed = parser.parse(resposta_texto)
+
+        json_matches = re.search(r'\{"agents"\s*:\s*\[.*?\]\}', resposta_texto, re.DOTALL)
+        if json_matches:
+            parsed = json.loads(json_matches.group())
+        else:
+            raise ValueError(f"Nenhum JSON encontrado: {resposta_texto}")
+
+        agentes = parsed.get("agents", [])
+
+        logger.info(f"Agentes selecionados: {agentes}")
+
+        return [
+            {
+                "query": query,
+                "agent": agente
+            }
+            for agente in agentes
+        ]
+
+    except Exception as e:
+        logger.error(f"Erro no router: {e}")
+        return [
+            {
+                "query": query,
+                "agent": "abrir_conta"
+            }
+        ]

@@ -10,6 +10,14 @@ from operator import add
 from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import Message, Part, Role, TextPart, SendMessageRequest, MessageSendParams
 
+from ag_ui.core import (
+    EventType,
+    TextMessageStartEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+)
+from pydantic import BaseModel
+
 from src.agents import classifique_intencao_do_usuario
 
 logger = logging.getLogger(__name__)
@@ -26,6 +34,10 @@ CLIENT_CACHE = {}
 class State(TypedDict):
     query: str
     responses: Annotated[list[str], add]
+
+class StateUpdateEvent(BaseModel):
+    type: str = "STATE_UPDATE"
+    state: dict
 
 async def request_agent(message: str, agent_url: str) -> str:
     if agent_url not in CLIENT_CACHE:
@@ -79,11 +91,11 @@ async def request_agent(message: str, agent_url: str) -> str:
                 
     return 'Sem resposta do agente'
 
-def no_de_roteamento(state: State):
+async def no_de_roteamento(state: State):
 
     query = state.get("query", "")
 
-    classifications = classifique_intencao_do_usuario(query)
+    classifications = await classifique_intencao_do_usuario(query)
 
     logger.info(f"Classificações obtidas: {classifications}")
 
@@ -143,3 +155,87 @@ async def executar_supervisor(texto_usuario: str):
     result = await graph.ainvoke(input_state)
 
     return "\n\n".join(result["responses"])
+
+async def executar_supervisor_stream(input_data):
+
+    messages = input_data.messages
+    if not messages:
+        user_message = ""
+    else:
+        user_message = messages[-1].content
+
+    assistant_id = str(uuid.uuid4())
+
+    yield TextMessageStartEvent(
+        type=EventType.TEXT_MESSAGE_START,
+        messageId=assistant_id,
+        role="assistant",
+    )
+
+    yield TextMessageContentEvent(
+        type=EventType.TEXT_MESSAGE_CONTENT,
+        messageId=assistant_id,
+        delta="Analisando sua solicitação...\n\n"
+    )
+
+    state = {
+        "query": user_message,
+        "responses": []
+    }
+    yield StateUpdateEvent(
+        state=state
+    )
+
+    classifications = await classifique_intencao_do_usuario(user_message)
+
+    agentes = [c["agent"] for c in classifications]
+    yield TextMessageContentEvent(
+        type=EventType.TEXT_MESSAGE_CONTENT,
+        messageId=assistant_id,
+        delta=f"Agentes selecionados: {', '.join(agentes)}\n\n"
+    )
+
+    state["agents"] = agentes
+    yield StateUpdateEvent(
+        state=state
+    )
+
+    responses = []
+    for c in classifications:
+        agent_name = c["agent"]
+
+        yield TextMessageContentEvent(
+            type=EventType.TEXT_MESSAGE_CONTENT,
+            messageId=assistant_id,
+            delta=f"Chamando agente {agent_name}...\n\n"
+        )
+
+        resposta = await request_agent(
+            c["query"],
+            AGENTS[agent_name]
+        )
+
+        responses.append(resposta)
+
+        yield TextMessageContentEvent(
+            type=EventType.TEXT_MESSAGE_CONTENT,
+            messageId=assistant_id,
+            delta=f"{agent_name} respondeu\n\n"
+        )
+
+        state["responses"].append({agent_name: resposta})
+        yield StateUpdateEvent(
+            state=state
+        )
+
+    resposta_final = "\n\n".join(responses)
+    yield TextMessageContentEvent(
+        type=EventType.TEXT_MESSAGE_CONTENT,
+        messageId=assistant_id,
+        delta=f"Resultado final: {resposta_final}\n\n"
+    )
+
+    yield TextMessageEndEvent(
+        type=EventType.TEXT_MESSAGE_END,
+        messageId=assistant_id,
+    )
